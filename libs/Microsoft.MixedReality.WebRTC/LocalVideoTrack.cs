@@ -27,6 +27,12 @@ namespace Microsoft.MixedReality.WebRTC
         public string Name { get; }
 
         /// <summary>
+        /// External source for this video track, or <c>null</c> if the source is
+        /// some internal video capture device.
+        /// </summary>
+        public ExternalVideoTrackSource Source { get; } = null;
+
+        /// <summary>
         /// Enabled status of the track. If enabled, send local video frames to the remote peer as
         /// expected. If disabled, send only black frames instead.
         /// </summary>
@@ -80,6 +86,16 @@ namespace Microsoft.MixedReality.WebRTC
             PeerConnectionInterop.PeerConnection_AddRef(nativePeerHandle);
             _nativePeerHandle = nativePeerHandle.MakeCopy();
             Name = trackName;
+            RegisterInteropCallbacks();
+        }
+
+        internal LocalVideoTrack(ExternalVideoTrackSource source, PeerConnection peer, PeerConnectionHandle nativePeerHandle,
+            IntPtr nativeHandle, string trackName) : base(nativeHandle)
+        {
+            PeerConnection = peer;
+            _nativePeerHandle = nativePeerHandle.MakeCopy();
+            Name = trackName;
+            Source = source;
             RegisterInteropCallbacks();
         }
 

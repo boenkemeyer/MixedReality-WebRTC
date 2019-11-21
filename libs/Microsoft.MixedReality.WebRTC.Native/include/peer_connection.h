@@ -12,6 +12,7 @@ namespace Microsoft::MixedReality::WebRTC {
 
 class PeerConnection;
 class LocalVideoTrack;
+class ExternalVideoTrackSource;
 class DataChannel;
 
 /// The PeerConnection class is the entry point to most of WebRTC.
@@ -211,6 +212,12 @@ class PeerConnection : public webrtc::PeerConnectionObserver,
   /// Remove a local video track from the peer connection.
   /// The underlying RTP sender/transceiver are kept alive but inactive.
   webrtc::RTCError RemoveLocalVideoTrack(LocalVideoTrack& video_track) noexcept;
+
+  /// Remove all tracks sharing the given video track source.
+  /// Note that currently video source sharing is not supported, so this will
+  /// remove at most a single track backed by the given source.
+  void RemoveLocalVideoTracksFromSource(
+      ExternalVideoTrackSource& source) noexcept;
 
   //
   // Audio

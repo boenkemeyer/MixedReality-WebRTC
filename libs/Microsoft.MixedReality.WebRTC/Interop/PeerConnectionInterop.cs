@@ -148,6 +148,18 @@ namespace Microsoft.MixedReality.WebRTC.Interop
             public PeerConnectionAudioFrameCallback RemoteAudioFrameCallback;
         }
 
+        public class ExternalI420AVideoFrameRequestCallbackArgs
+        {
+            public PeerConnection Peer;
+            public I420AVideoFrameRequestDelegate FrameRequestCallback;
+        }
+
+        public class ExternalArgb32VideoFrameRequestCallbackArgs
+        {
+            public PeerConnection Peer;
+            public Argb32VideoFrameRequestDelegate FrameRequestCallback;
+        }
+
         [MonoPInvokeCallback(typeof(ConnectedDelegate))]
         public static void ConnectedCallback(IntPtr userData)
         {
@@ -285,6 +297,36 @@ namespace Microsoft.MixedReality.WebRTC.Interop
                 audioData = audioData
             };
             peer.OnRemoteAudioFrameReady(frame);
+        }
+
+        [MonoPInvokeCallback(typeof(PeerConnectionRequestExternalI420AVideoFrameCallback))]
+        public static void RequestI420AVideoFrameFromExternalSourceCallback(IntPtr userData, IntPtr sourceHandle,
+            uint requestId, long timestampMs)
+        {
+            var handle = GCHandle.FromIntPtr(userData);
+            var args = (handle.Target as ExternalI420AVideoFrameRequestCallbackArgs);
+            var request = new FrameRequest
+            {
+                SourceHandle = sourceHandle,
+                RequestId = requestId,
+                TimestampMs = timestampMs
+            };
+            args.FrameRequestCallback.Invoke(request);
+        }
+
+        [MonoPInvokeCallback(typeof(PeerConnectionRequestExternalArgb32VideoFrameCallback))]
+        public static void RequestArgb32VideoFrameFromExternalSourceCallback(IntPtr userData, IntPtr sourceHandle,
+            uint requestId, long timestampMs)
+        {
+            var handle = GCHandle.FromIntPtr(userData);
+            var args = (handle.Target as ExternalArgb32VideoFrameRequestCallbackArgs);
+            var request = new FrameRequest
+            {
+                SourceHandle = sourceHandle,
+                RequestId = requestId,
+                TimestampMs = timestampMs
+            };
+            args.FrameRequestCallback.Invoke(request);
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -428,6 +470,14 @@ namespace Microsoft.MixedReality.WebRTC.Interop
         public delegate void PeerConnectionAudioFrameCallback(IntPtr userData,
             IntPtr data, uint bitsPerSample, uint sampleRate, uint channelCount, uint frameCount);
 
+        [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Ansi)]
+        public unsafe delegate void PeerConnectionRequestExternalI420AVideoFrameCallback(IntPtr userData,
+            IntPtr sourceHandle, uint requestId, long timestampMs);
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Ansi)]
+        public unsafe delegate void PeerConnectionRequestExternalArgb32VideoFrameCallback(IntPtr userData,
+            IntPtr sourceHandle, uint requestId, long timestampMs);
+
         #endregion
 
 
@@ -533,6 +583,18 @@ namespace Microsoft.MixedReality.WebRTC.Interop
             string trackName, VideoDeviceConfiguration config, out IntPtr trackHandle);
 
         [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
+            EntryPoint = "mrsPeerConnectionAddLocalVideoTrackFromExternalI420ASource")]
+        public static extern uint PeerConnection_AddLocalVideoTrackFromExternalI420ASource(
+            PeerConnectionHandle peerHandle, string trackName, PeerConnectionRequestExternalI420AVideoFrameCallback callback,
+            IntPtr userData, out IntPtr sourceHandle, out IntPtr trackHandle);
+
+        [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
+            EntryPoint = "mrsPeerConnectionAddLocalVideoTrackFromExternalArgb32Source")]
+        public static extern uint PeerConnection_AddLocalVideoTrackFromExternalArgb32Source(
+            PeerConnectionHandle peerHandle, string trackName, PeerConnectionRequestExternalArgb32VideoFrameCallback callback,
+            IntPtr userData, out IntPtr sourceHandle, out IntPtr trackHandle);
+
+        [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
             EntryPoint = "mrsPeerConnectionAddLocalAudioTrack")]
         public static extern uint PeerConnection_AddLocalAudioTrack(PeerConnectionHandle peerHandle);
 
@@ -549,6 +611,10 @@ namespace Microsoft.MixedReality.WebRTC.Interop
         [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
             EntryPoint = "mrsPeerConnectionRemoveLocalVideoTrack")]
         public static extern uint PeerConnection_RemoveLocalVideoTrack(PeerConnectionHandle peerHandle, IntPtr trackHandle);
+
+        [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
+            EntryPoint = "mrsPeerConnectionRemoveLocalVideoTracksFromSource")]
+        public static extern uint PeerConnection_RemoveLocalVideoTracksFromSource(PeerConnectionHandle peerHandle, IntPtr sourceHandle);
 
         [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
             EntryPoint = "mrsPeerConnectionRemoveDataChannel")]
@@ -586,6 +652,59 @@ namespace Microsoft.MixedReality.WebRTC.Interop
         [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
             EntryPoint = "mrsPeerConnectionClose")]
         public static extern void PeerConnection_Close(PeerConnectionHandle peerHandle);
+
+        #endregion
+
+
+        #region Helpers
+
+        public static LocalVideoTrack AddLocalVideoTrackFromExternalI420ASource(PeerConnection peer,
+            PeerConnectionHandle peerHandle, string trackName, I420AVideoFrameRequestDelegate frameRequestCallback)
+        {
+            // Create some static callback args which keep the sourceDelegate alive
+            var args = new ExternalI420AVideoFrameRequestCallbackArgs
+            {
+                Peer = peer,
+                FrameRequestCallback = frameRequestCallback
+            };
+            var argsHandle = GCHandle.Alloc(args, GCHandleType.Normal); //< TODO - Free that later...
+
+            // Add the local track based on the static interop trampoline callback
+            uint res = PeerConnection_AddLocalVideoTrackFromExternalI420ASource(peerHandle, trackName,
+                RequestI420AVideoFrameFromExternalSourceCallback, GCHandle.ToIntPtr(argsHandle),
+                out IntPtr sourceHandle, out IntPtr trackHandle);
+            Utils.ThrowOnErrorCode(res);
+            unsafe
+            {
+                var source = new ExternalVideoTrackSource(peer, peerHandle, sourceHandle, argsHandle);
+                var track = new LocalVideoTrack(source, peer, peerHandle, trackHandle, trackName);
+                return track;
+            }
+        }
+
+        public static LocalVideoTrack AddLocalVideoTrackFromExternalArgb32Source(PeerConnection peer,
+            PeerConnectionHandle peerHandle, string trackName, Argb32VideoFrameRequestDelegate frameRequestCallback)
+        {
+            // Create some static callback args which keep the sourceDelegate alive
+            var args = new ExternalArgb32VideoFrameRequestCallbackArgs
+            {
+                Peer = peer,
+                FrameRequestCallback = frameRequestCallback
+            };
+            var argsHandle = GCHandle.Alloc(args, GCHandleType.Normal); //< TODO - Free that later...
+
+            // Add the local track based on the static interop trampoline callback
+            uint res = PeerConnection_AddLocalVideoTrackFromExternalArgb32Source(peerHandle, trackName,
+                RequestArgb32VideoFrameFromExternalSourceCallback, GCHandle.ToIntPtr(argsHandle),
+                out IntPtr sourceHandle, out IntPtr trackHandle);
+            Utils.ThrowOnErrorCode(res);
+            unsafe
+            {
+                var source = new ExternalVideoTrackSource(peer, peerHandle, sourceHandle, argsHandle);
+                var track = new LocalVideoTrack(source, peer, peerHandle, trackHandle, trackName);
+                return track;
+            }
+        }
 
         #endregion
     }

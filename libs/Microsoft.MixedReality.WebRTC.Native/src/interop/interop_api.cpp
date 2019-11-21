@@ -9,6 +9,7 @@
 #include "interop/global_factory.h"
 #include "interop/interop_api.h"
 #include "local_video_track.h"
+#include "media/external_video_track_source.h"
 #include "peer_connection.h"
 #include "sdp_utils.h"
 
@@ -808,6 +809,171 @@ mrsResult MRS_CALL mrsPeerConnectionAddLocalVideoTrack(
   return MRS_E_UNKNOWN;
 }
 
+mrsResult MRS_CALL mrsPeerConnectionAddLocalVideoTrackFromExternalI420Source(
+    PeerConnectionHandle peerHandle,
+    const char* track_name,
+    mrsRequestExternalI420VideoFrameCallback callback,
+    void* user_data,
+    ExternalVideoTrackSourceHandle* source_handle,
+    LocalVideoTrackHandle* track_handle) noexcept {
+  if (!source_handle) {
+    return MRS_E_INVALID_PARAMETER;
+  }
+  *source_handle = nullptr;
+  auto peer = static_cast<PeerConnection*>(peerHandle);
+  if (!peer) {
+    return MRS_E_INVALID_PEER_HANDLE;
+  }
+  auto pc_factory = GlobalFactory::Instance()->GetExisting();
+  if (!pc_factory) {
+    return MRS_E_INVALID_OPERATION;
+  }
+
+  rtc::scoped_refptr<webrtc::VideoTrackSourceInterface> video_source =
+      ExternalVideoTrackSource::createFromI420(callback, user_data);
+  if (!video_source) {
+    return MRS_E_UNKNOWN;
+  }
+  std::string track_name_str;
+  if (track_name && (track_name[0] != '\0')) {
+    track_name_str = track_name;
+  } else {
+    track_name_str = "external_track";
+  }
+  // The video track keeps a reference to the video source; let's hope this
+  // does not change, because this is not explicitly mentioned in the docs,
+  // and the video track is the only one keeping the video source alive.
+  rtc::scoped_refptr<webrtc::VideoTrackInterface> video_track =
+      pc_factory->CreateVideoTrack(track_name_str, video_source);
+  if (!video_track) {
+    return MRS_E_UNKNOWN;
+  }
+  auto result = peer->AddLocalVideoTrack(std::move(video_track));
+  if (result.ok()) {
+    video_source->AddRef();  // for the handle
+    *source_handle = video_source.get();
+    rtc::scoped_refptr<LocalVideoTrack>& video_track_wrapper = result.value();
+    video_track_wrapper->AddRef();  // for the handle
+    *track_handle = video_track_wrapper.get();
+    return MRS_SUCCESS;
+  }
+  RTC_LOG(LS_ERROR) << "Failed to add local video track: "
+                    << result.error().message();
+  return MRS_E_UNKNOWN;  //< TODO Convert from result.error()?
+}
+
+mrsResult MRS_CALL mrsPeerConnectionAddLocalVideoTrackFromExternalArgb32Source(
+    PeerConnectionHandle peerHandle,
+    const char* track_name,
+    mrsRequestExternalArgb32VideoFrameCallback callback,
+    void* user_data,
+    ExternalVideoTrackSourceHandle* source_handle,
+    LocalVideoTrackHandle* track_handle) noexcept {
+  if (!source_handle) {
+    return MRS_E_INVALID_PARAMETER;
+  }
+  *source_handle = nullptr;
+  auto peer = static_cast<PeerConnection*>(peerHandle);
+  if (!peer) {
+    return MRS_E_INVALID_PEER_HANDLE;
+  }
+  auto pc_factory = GlobalFactory::Instance()->GetExisting();
+  if (!pc_factory) {
+    return MRS_E_INVALID_OPERATION;
+  }
+
+  rtc::scoped_refptr<ExternalVideoTrackSource> video_source =
+      ExternalVideoTrackSource::createFromArgb32(callback, user_data);
+  if (!video_source) {
+    return MRS_E_UNKNOWN;
+  }
+  // The video track keeps a reference to the video source; let's hope this
+  // does not change, because this is not explicitly mentioned in the docs,
+  // and the video track is the only one keeping the video source alive.
+  std::string track_name_str;
+  if (!IsStringNullOrEmpty(track_name)) {
+    track_name_str = track_name;
+  } else {
+    track_name_str = "external_track";
+  }
+  rtc::scoped_refptr<webrtc::VideoTrackInterface> video_track =
+      pc_factory->CreateVideoTrack(track_name_str, video_source);
+  if (!video_track) {
+    return MRS_E_UNKNOWN;
+  }
+  auto result = peer->AddLocalVideoTrack(std::move(video_track));
+  if (result.ok()) {
+    video_source->AddRef();  // for the handle
+    *source_handle = video_source.get();
+    rtc::scoped_refptr<LocalVideoTrack>& video_track_wrapper = result.value();
+    video_track_wrapper->AddRef();  // for the handle
+    *track_handle = video_track_wrapper.get();
+    return MRS_SUCCESS;
+  }
+  RTC_LOG(LS_ERROR) << "Failed to add local video track: "
+                    << result.error().message();
+  return MRS_E_UNKNOWN;  //< TODO Convert from result.error()?
+}
+
+MRS_API mrsResult MRS_CALL mrsPeerConnectionRemoveLocalVideoTrack(
+    PeerConnectionHandle peer_handle,
+    LocalVideoTrackHandle track_handle) noexcept {
+  auto peer = static_cast<PeerConnection*>(peer_handle);
+  if (!peer) {
+    return MRS_E_INVALID_PEER_HANDLE;
+  }
+  auto track = static_cast<LocalVideoTrack*>(track_handle);
+  if (!track) {
+    return MRS_E_INVALID_PEER_HANDLE;
+  }
+  const mrsResult res =
+      (peer->RemoveLocalVideoTrack(*track).ok() ? MRS_SUCCESS : MRS_E_UNKNOWN);
+  return res;
+}
+
+MRS_API mrsResult MRS_CALL mrsPeerConnectionRemoveLocalVideoTracksFromSource(
+    PeerConnectionHandle peer_handle,
+    ExternalVideoTrackSourceHandle source_handle) noexcept {
+  auto peer = static_cast<PeerConnection*>(peer_handle);
+  if (!peer) {
+    return MRS_E_INVALID_PEER_HANDLE;
+  }
+  auto source = static_cast<ExternalVideoTrackSource*>(source_handle);
+  if (!source) {
+    return MRS_E_INVALID_PEER_HANDLE;
+  }
+  peer->RemoveLocalVideoTracksFromSource(*source);
+  return MRS_SUCCESS;
+}
+
+mrsResult MRS_CALL mrsExternalVideoTrackSourceCompleteI420VideoFrameRequest(
+    ExternalVideoTrackSourceHandle source_handle,
+    uint32_t request_id,
+    const mrsI420VideoFrameView* frame_view) noexcept {
+  if (!frame_view) {
+    return MRS_E_INVALID_PARAMETER;
+  }
+  auto source = static_cast<ExternalVideoTrackSource*>(source_handle);
+  if (!source) {
+    return MRS_E_INVALID_PEER_HANDLE;
+  }
+  return source->CompleteRequest(request_id, *frame_view);
+}
+
+mrsResult MRS_CALL mrsExternalVideoTrackSourceCompleteArgb32VideoFrameRequest(
+    ExternalVideoTrackSourceHandle source_handle,
+    uint32_t request_id,
+    const mrsArgb32VideoFrameView* frame_view) noexcept {
+  if (!frame_view) {
+    return MRS_E_INVALID_PARAMETER;
+  }
+  auto source = static_cast<ExternalVideoTrackSource*>(source_handle);
+  if (!source) {
+    return MRS_E_INVALID_PEER_HANDLE;
+  }
+  return source->CompleteRequest(request_id, *frame_view);
+}
+
 mrsResult MRS_CALL
 mrsPeerConnectionAddLocalAudioTrack(PeerConnectionHandle peerHandle) noexcept {
   if (auto peer = static_cast<PeerConnection*>(peerHandle)) {
@@ -866,22 +1032,6 @@ mrsResult MRS_CALL mrsPeerConnectionAddDataChannel(
     return MRS_SUCCESS;
   }
   return RTCToAPIError(data_channel.error());
-}
-
-mrsResult MRS_CALL mrsPeerConnectionRemoveLocalVideoTrack(
-    PeerConnectionHandle peer_handle,
-    LocalVideoTrackHandle track_handle) noexcept {
-  auto peer = static_cast<PeerConnection*>(peer_handle);
-  if (!peer) {
-    return MRS_E_INVALID_PEER_HANDLE;
-  }
-  auto track = static_cast<LocalVideoTrack*>(track_handle);
-  if (!track) {
-    return MRS_E_INVALID_PEER_HANDLE;
-  }
-  const mrsResult res =
-      (peer->RemoveLocalVideoTrack(*track).ok() ? MRS_SUCCESS : MRS_E_UNKNOWN);
-  return res;
 }
 
 void MRS_CALL mrsPeerConnectionRemoveLocalAudioTrack(
@@ -1000,6 +1150,11 @@ mrsPeerConnectionSetRemoteDescription(PeerConnectionHandle peerHandle,
 }
 
 void MRS_CALL mrsPeerConnectionClose(PeerConnectionHandle peerHandle) noexcept {
+  if (auto peer = static_cast<PeerConnection*>(peerHandle)) {
+    peer->Close();
+  }
+
+  // Currently "close" in interop means "close and dispose".
   GlobalFactory::Instance()->RemovePeerConnection(peerHandle);
 }
 

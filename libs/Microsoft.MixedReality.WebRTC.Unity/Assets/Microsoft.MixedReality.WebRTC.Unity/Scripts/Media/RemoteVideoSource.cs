@@ -39,6 +39,12 @@ namespace Microsoft.MixedReality.WebRTC.Unity
         public bool IsPlaying { get; private set; }
 
         /// <summary>
+        /// Frame queue holding the pending frames enqueued by the video source itself,
+        /// which a video renderer needs to read and display.
+        /// </summary>
+        private VideoFrameQueue<I420AVideoFrameStorage> _frameQueue;
+
+        /// <summary>
         /// Internal queue used to marshal work back to the main Unity thread.
         /// </summary>
         private ConcurrentQueue<Action> _mainThreadWorkQueue = new ConcurrentQueue<Action>();
@@ -99,7 +105,8 @@ namespace Microsoft.MixedReality.WebRTC.Unity
         /// </summary>
         protected void Awake()
         {
-            FrameQueue = new VideoFrameQueue<I420AVideoFrameStorage>(5);
+            _frameQueue = new VideoFrameQueue<I420AVideoFrameStorage>(5);
+            FrameQueue = _frameQueue;
             PeerConnection.OnInitialized.AddListener(OnPeerInitialized);
             PeerConnection.OnShutdown.AddListener(OnPeerShutdown);
         }
@@ -194,7 +201,7 @@ namespace Microsoft.MixedReality.WebRTC.Unity
         {
             // This does not need to enqueue work, because FrameQueue is thread-safe
             // and can be manipulated from any thread (does not access Unity objects).
-            FrameQueue.Enqueue(frame);
+            _frameQueue.Enqueue(frame);
         }
     }
 }
